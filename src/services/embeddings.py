@@ -3,7 +3,7 @@ from langchain_core.embeddings import Embeddings
 
 from src.config import EMBEDDING_MODEL as MODEL_NAME
 
-embedding_model = SentenceTransformer(MODEL_NAME)
+embedding_model = SentenceTransformer(MODEL_NAME, device="cpu")
 
 # Procesa una lista y devuelve una lista de vectores (INGESTA)
 def embedding_list(texts: list[str]) -> list[list[float]]:

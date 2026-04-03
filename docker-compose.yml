@@ -1,7 +1,7 @@
 services:
 
   qdrant:
-    image: qdrant/qdrant:latest   # idealmente fijar versión concreta, ej: qdrant/qdrant:v1.13.0
+    image: qdrant/qdrant:v1.17.0
     container_name: qdrant_ncbi_db
     command: "./qdrant --config-path /config/config.yaml"
     ports:
