@@ -1,0 +1,32 @@
+log_level: INFO 
+
+storage: 
+  node_type: "Normal"
+
+  performance: 
+    max_search_threads: 0 
+    optimizer_cpu_bugdet: 0 
+
+  hnsw_index: 
+    m: 16  # num conexiones que puede tener un nodo en una capa del grafo. Se puede optimizar *
+    
+    ef_construct: 200 # tamaño de los nodos que se consedran en la construcción del grafo (los índice). CUuanto más alto sea, más tiempo se tardará en construir el grafo, pero mejor será la calidad de las búsquedas. Se puede optimizar *
+    
+    full_scan_threshold_kb: 10000 # umbral en KB para decidir si se debe realizar una búsqueda de escaneo completo (fuerza bruta) en lugar de usar el índice HNSW. Si el tamaño de los datos es menor que este umbral, se realizará un escaneo completo, lo que puede ser más eficiente para conjuntos de datos pequeños. Se puede optimizar * 
+
+    collection: 
+      quantization: null 
+
+  service: 
+    host: 0.0.0.0
+    http_port: 6333
+    grpc_port: 6334
+  # Lo podemos conectar por API a qdrant con langchain y langraph pero de moemento no lo vamos a usar
+
+  cluster: 
+    enabled: false 
+  # Si tenemos un cluster, alguno tendrá que hacer el control name, y los otros serán workers, y el control name se encargará de distribuir las tareas entre los workers. 
+  # Si no tenemos un cluster, entonces el control name y el worker estarán en la misma máquina.
+  # Alguno tendrá que ser de solo lectura o alguno tendrá que ser de solo escritura, o todos tendrán que ser de lectura y escritura.
+
+  telemetry_disabled: true
