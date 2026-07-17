@@ -39,3 +39,6 @@ notebooks/.ipynb_checkpoints/
 
 # ── Debug ─────────────────────────────────────────────────
 debug/
+
+# ── Superpowers ───────────────────────────────────────────
+.superpowers/
