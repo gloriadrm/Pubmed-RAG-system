@@ -158,6 +158,7 @@ button[type="submit"]:disabled { opacity: 0.6; cursor: default; }
   font-size: 13px;
   color: var(--muted);
 }
+.loading[hidden] { display: none; }
 
 .spinner {
   width: 14px;
