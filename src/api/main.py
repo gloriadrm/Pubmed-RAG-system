@@ -12,6 +12,7 @@ Lanzar con:
     uvicorn src.api.main:app --reload --port 8000
 """
 
+import os
 import requests as http_requests
 from fastapi import FastAPI, HTTPException
 
@@ -20,7 +21,7 @@ from src.api.schema import (
     IngestRequest, IngestResponse,
     HealthResponse,
 )
-from src.config import QDRANT_URL, OLLAMA_BASE_URL
+from src.config import QDRANT_URL
 from src.rag.chain import rag_chain
 
 app = FastAPI(
@@ -34,7 +35,7 @@ app = FastAPI(
 
 @app.get("/health", response_model=HealthResponse)
 def health():
-    """Comprueba que Qdrant y Ollama están accesibles."""
+    """Comprueba que Qdrant está accesible y que el proveedor LLM activo está configurado."""
 
     # Qdrant
     try:
@@ -43,16 +44,16 @@ def health():
     except Exception as e:
         qdrant_status = f"unreachable ({e})"
 
-    # Ollama
-    try:
-        r = http_requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
-        ollama_status = "ok" if r.status_code == 200 else f"error {r.status_code}"
-    except Exception as e:
-        ollama_status = f"unreachable ({e})"
+    # LLM activo — actualmente Gemini (ver src/services/llms.py). Ollama está
+    # comentado y no es el proveedor en uso, por eso no se comprueba aquí.
+    if os.environ.get("GOOGLE_API_KEY"):
+        llm_status = "gemini"
+    else:
+        llm_status = "gemini (missing GOOGLE_API_KEY)"
 
-    overall = "ok" if qdrant_status == "ok" and ollama_status == "ok" else "degraded"
+    overall = "ok" if qdrant_status == "ok" and llm_status == "gemini" else "degraded"
 
-    return HealthResponse(status=overall, qdrant=qdrant_status, ollama=ollama_status)
+    return HealthResponse(status=overall, qdrant=qdrant_status, llm=llm_status)
 
 
 # -------------- QUERY (RAG principal) --------------
@@ -95,6 +96,7 @@ async def query(request: QueryRequest):
             title=meta.get("title", ""),
             section=meta.get("section"),
             pmc_id=meta.get("pmc_id"),
+            pm_id=meta.get("pm_id"),
             source=meta.get("source", ""),
         ))
 

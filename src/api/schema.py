@@ -19,6 +19,7 @@ class SourceDoc(BaseModel):
     title:   str
     section: Optional[str] = None
     pmc_id:  Optional[str] = None
+    pm_id:   Optional[str] = None   # PMID de PubMed (siempre presente en docs source=pubmed)
     source:  str            # "pubmed" | "pmc"
 
 
@@ -41,6 +42,6 @@ class IngestResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status:  str
-    qdrant:  str
-    ollama:  str
+    status: str
+    qdrant: str
+    llm:    str
