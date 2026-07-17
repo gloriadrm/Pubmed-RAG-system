@@ -1,5 +1,82 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Biomedical RAG — Demo</title></head>
-<body><p>placeholder</p></body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biomedical RAG — Demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>Biomedical RAG</h1>
+    <div class="health" id="health">
+      <span class="health-item" id="health-api">API <span class="dot" data-state="unknown"></span></span>
+      <span class="health-item" id="health-qdrant">Qdrant <span class="dot" data-state="unknown"></span></span>
+      <span class="health-item" id="health-llm">LLM <span class="dot" data-state="unknown"></span></span>
+      <button class="refresh-btn" id="health-refresh" type="button" title="Actualizar estado">↻</button>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="query" role="tab" aria-selected="true">Consultar</button>
+      <button class="tab-btn" data-tab="ingest" role="tab" aria-selected="false">Ingestar</button>
+    </nav>
+
+    <section id="tab-query" class="tab-panel" role="tabpanel">
+      <form id="query-form">
+        <label for="question">Pregunta</label>
+        <textarea id="question" name="question" rows="3"
+                  placeholder="Escribe una pregunta sobre el corpus biomédico indexado…" required></textarea>
+
+        <div class="examples">
+          <span class="examples-label">Ejemplos:</span>
+          <button type="button" class="chip"
+                  data-example="Resumen general sobre microbiota y permeabilidad intestinal.">
+            Resumen general sobre microbiota y permeabilidad intestinal
+          </button>
+          <button type="button" class="chip"
+                  data-example="¿Qué metodología utiliza el estudio de [autor/título]?">
+            ¿Qué metodología utiliza el estudio de [autor/título]?
+          </button>
+          <button type="button" class="chip"
+                  data-example="¿Qué mecanismos inflamatorios aparecen en varios estudios?">
+            ¿Qué mecanismos inflamatorios aparecen en varios estudios?
+          </button>
+        </div>
+
+        <button type="submit" id="query-submit">Preguntar</button>
+      </form>
+
+      <div id="query-result" class="result" hidden></div>
+      <div id="query-error" class="error-box" hidden></div>
+    </section>
+
+    <section id="tab-ingest" class="tab-panel" role="tabpanel" hidden>
+      <p class="warning">
+        ⚠ La ingesta puede tardar varios minutos (búsqueda en PubMed, cruce con PMC,
+        chunking e indexación). No cierres esta pestaña mientras esté en curso.
+      </p>
+      <form id="ingest-form">
+        <label for="ingest-query">Query temática</label>
+        <input type="text" id="ingest-query" name="query"
+               placeholder="p. ej. gut microbiota intestinal permeability" required>
+
+        <label for="ingest-n">Número de artículos</label>
+        <input type="number" id="ingest-n" name="n" value="10" min="1" max="100">
+
+        <button type="submit" id="ingest-submit">Ingestar</button>
+      </form>
+
+      <div id="ingest-loading" class="loading" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        Ingestando… puede tardar varios minutos, no cierres esta pestaña.
+      </div>
+      <div id="ingest-status" class="status" hidden></div>
+      <div id="ingest-error" class="error-box" hidden></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
 </html>
