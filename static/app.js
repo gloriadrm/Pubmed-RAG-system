@@ -1,3 +1,5 @@
+import { initHealth } from "./health.js";
+
 function initTabs() {
   const buttons = document.querySelectorAll(".tab-btn");
 
@@ -19,4 +21,5 @@ function initTabs() {
 
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
+  initHealth();
 });
