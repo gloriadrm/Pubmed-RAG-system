@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # para que pip pueda instalar el proyecto y sus dependencias en un solo paso
 COPY pyproject.toml .
 COPY src/ ./src/
+COPY static/ ./static/
 
 # Instala todas las dependencias declaradas en pyproject.toml
 # + registra el paquete src (necesario para que los imports absolutos funcionen)

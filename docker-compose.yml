@@ -26,6 +26,8 @@ services:
     volumes:
       # Datos persistentes (OA CSV, last_update tracker)
       - ./data:/app/data
+      # Frontend estático — montado en modo lectura para poder iterar sin rebuild
+      - ./static:/app/static:ro
       # Caché del modelo bge-m3 — evita re-descargarlo en cada rebuild
       - huggingface_cache:/root/.cache/huggingface
     env_file:

@@ -15,6 +15,7 @@ Lanzar con:
 import os
 import requests as http_requests
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from src.api.schema import (
     QueryRequest, QueryResponse, SourceDoc,
@@ -129,3 +130,8 @@ def ingest(request: IngestRequest):
         return IngestResponse(message=f"Ingesta completada para query: '{request.query}'")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# -------------- FRONTEND ESTÁTICO --------------
+# Debe montarse el último: como catch-all en "/", cualquier ruta de API
+# registrada arriba (/health, /query, /ingest, /docs) tiene prioridad.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
