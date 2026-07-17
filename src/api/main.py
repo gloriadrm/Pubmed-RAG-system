@@ -4,9 +4,10 @@ main.py
 API FastAPI del sistema RAG biomédico.
 
 Endpoints:
-  GET  /health          → estado de Qdrant y Ollama
+  GET  /health          → estado de Qdrant y del proveedor LLM activo
   POST /query           → pipeline RAG completo (clasificador → retrieval → LLM)
   POST /ingest          → lanza ingesta temática de nuevos artículos
+  GET  /                → frontend estático (demo web)
 
 Lanzar con:
     uvicorn src.api.main:app --reload --port 8000
