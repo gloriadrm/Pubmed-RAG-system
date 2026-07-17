@@ -92,7 +92,7 @@ curl http://localhost:8000/health
 
 Respuesta esperada:
 ```json
-{"status": "ok", "qdrant": "ok", "ollama": "ok"}
+{"status": "ok", "qdrant": "ok", "llm": "gemini"}
 ```
 
 ---
@@ -157,6 +157,22 @@ El sistema clasifica automáticamente la pregunta en uno de estos tipos:
   ]
 }
 ```
+
+---
+
+## Interfaz web
+
+Además de la API, hay una interfaz de demo servida en la raíz:
+
+http://localhost:8000/
+
+Permite lanzar preguntas contra `/query` (con ejemplos precargados para los tres tipos de
+routing), lanzar ingestas contra `/ingest` y ver el estado de salud del sistema (`/health`).
+
+> **Limitación conocida:** `/ingest` es síncrono y bloqueante — la petición HTTP permanece
+> abierta durante todo el proceso de ingesta (puede tardar varios minutos). Una versión de
+> producción debería lanzarlo como job asíncrono con `job_id` y un endpoint de estado en
+> lugar de depender de una conexión HTTP larga.
 
 ---
 

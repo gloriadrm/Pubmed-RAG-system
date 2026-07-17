@@ -26,7 +26,7 @@ def check_health(base_url: str):
     r = requests.get(f"{base_url}/health", timeout=5)
     data = r.json()
     print(f"  qdrant : {data['qdrant']}")
-    print(f"  ollama : {data['ollama']}")
+    print(f"  llm    : {data['llm']}")
     print(f"  status : {data['status']}")
     if data["status"] != "ok":
         print("⚠ Algún servicio no está disponible. Continúa de todas formas...\n")
