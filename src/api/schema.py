@@ -42,6 +42,9 @@ class IngestResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str
-    qdrant: str
-    llm:    str
+    status:             str
+    qdrant:             str
+    embedding_provider: str   # modelo de embeddings (fijo, no configurable vía LLM_PROVIDER)
+    embedding_status:   str   # loaded | not loaded | error (...)
+    llm_provider:       str   # proveedor LLM activo (openai | gemini | ollama)
+    llm_status:         str   # configured | reachable | misconfigured (...)

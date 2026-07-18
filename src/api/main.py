@@ -4,16 +4,22 @@ main.py
 API FastAPI del sistema RAG biomédico.
 
 Endpoints:
-  GET  /health          → estado de Qdrant y del proveedor LLM activo
+  GET  /health          → estado de Qdrant, embeddings (BGE-M3) y del proveedor LLM activo
   POST /query           → pipeline RAG completo (clasificador → retrieval → LLM)
   POST /ingest          → lanza ingesta temática de nuevos artículos
   GET  /                → frontend estático (demo web)
 
 Lanzar con:
     uvicorn src.api.main:app --reload --port 8000
+
+Nota sobre LLM_PROVIDER: el proveedor LLM se resuelve una única vez al
+importar src/services/llms.py (arranque del proceso). Cambiar LLM_PROVIDER
+en .env no tiene efecto en un proceso ya corriendo — hace falta reiniciar
+la API (en Docker: `docker compose up -d --force-recreate api`).
 """
 
 import os
+
 import requests as http_requests
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +29,7 @@ from src.api.schema import (
     IngestRequest, IngestResponse,
     HealthResponse,
 )
-from src.config import QDRANT_URL
+from src.config import QDRANT_URL, OLLAMA_BASE_URL, LLM_PROVIDER
 from src.rag.chain import rag_chain
 
 app = FastAPI(
@@ -37,7 +43,21 @@ app = FastAPI(
 
 @app.get("/health", response_model=HealthResponse)
 def health():
-    """Comprueba que Qdrant está accesible y que el proveedor LLM activo está configurado."""
+    """
+    Comprueba Qdrant, el modelo de embeddings (BGE-M3, local) y el estado de
+    configuración/alcance del proveedor LLM activo (LLM_PROVIDER) — tres
+    componentes independientes, deliberadamente no conflados entre sí:
+    Ollama puede estar caído sin afectar a los embeddings (BGE-M3 corre en
+    proceso, vía sentence-transformers, sin red) ni al LLM si el proveedor
+    activo es OpenAI o Gemini.
+
+    No hace ninguna llamada de generación de pago ni recalcula embeddings en
+    cada petición: para OpenAI/Gemini solo valida presencia de credenciales;
+    para Ollama hace ping a /api/tags (gratis, local); para embeddings
+    comprueba que el modelo ya está cargado en memoria (se carga una única
+    vez al arrancar el proceso — un encode() real de verificación vive en
+    test/test_health.py, no aquí, para mantener /health barato).
+    """
 
     # Qdrant
     try:
@@ -46,16 +66,45 @@ def health():
     except Exception as e:
         qdrant_status = f"unreachable ({e})"
 
-    # LLM activo — actualmente Gemini (ver src/services/llms.py). Ollama está
-    # comentado y no es el proveedor en uso, por eso no se comprueba aquí.
-    if os.environ.get("GOOGLE_API_KEY"):
-        llm_status = "gemini"
+    # Embeddings (BGE-M3) — modelo local, no depende de Ollama ni de ningún
+    # servicio de red. Se carga una única vez al importar
+    # src.services.embeddings (arranque del proceso); aquí solo se comprueba
+    # que esa instancia existe, sin volver a ejecutar inferencia en cada
+    # petición a /health.
+    embedding_provider = "bge-m3"
+    try:
+        from src.services.embeddings import embedding_model
+        embedding_status = "loaded" if embedding_model is not None else "not loaded"
+    except Exception as e:
+        embedding_status = f"error ({e})"
+
+    # LLM activo
+    if LLM_PROVIDER == "openai":
+        llm_status = "configured" if os.environ.get("OPENAI_API_KEY") else "misconfigured (missing OPENAI_API_KEY)"
+    elif LLM_PROVIDER == "gemini":
+        has_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        llm_status = "configured" if has_key else "misconfigured (missing GEMINI_API_KEY or GOOGLE_API_KEY)"
+    elif LLM_PROVIDER == "ollama":
+        try:
+            r = http_requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+            llm_status = "reachable" if r.status_code == 200 else f"error {r.status_code}"
+        except Exception as e:
+            llm_status = f"unreachable ({e})"
     else:
-        llm_status = "gemini (missing GOOGLE_API_KEY)"
+        llm_status = f"misconfigured (unknown provider '{LLM_PROVIDER}')"
 
-    overall = "ok" if qdrant_status == "ok" and llm_status == "gemini" else "degraded"
+    embedding_ok = embedding_status == "loaded"
+    llm_ok = llm_status in ("configured", "reachable")
+    overall = "ok" if qdrant_status == "ok" and embedding_ok and llm_ok else "degraded"
 
-    return HealthResponse(status=overall, qdrant=qdrant_status, llm=llm_status)
+    return HealthResponse(
+        status=overall,
+        qdrant=qdrant_status,
+        embedding_provider=embedding_provider,
+        embedding_status=embedding_status,
+        llm_provider=LLM_PROVIDER,
+        llm_status=llm_status,
+    )
 
 
 # -------------- QUERY (RAG principal) --------------

@@ -9,10 +9,12 @@ Sistema de Recuperación Aumentada con Generación (RAG) sobre artículos biomé
 ```
 Usuario → API (FastAPI)
              │
-             ├─ Clasificador (Gemini) → tipo de query
+             ├─ Clasificador (LLM_PROVIDER) → tipo de query
              ├─ Retrieval (Qdrant + BGE-M3) → chunks relevantes
-             └─ Generación (Gemini 2.0 Flash) → respuesta citada
+             └─ Generación (LLM_PROVIDER) → respuesta citada
 ```
+
+El proveedor LLM (clasificador + generación) es intercambiable mediante la variable `LLM_PROVIDER` — ver `src/services/llms.py`. Soporta **OpenAI**, **Gemini** y **Ollama** (local) sin tocar el resto del pipeline.
 
 **Componentes principales:**
 
@@ -20,7 +22,7 @@ Usuario → API (FastAPI)
 |---|---|---|
 | Base de datos vectorial | Qdrant | Docker |
 | Modelo de embeddings | BGE-M3 (`BAAI/bge-m3`) | Docker (contenedor API) |
-| LLM (clasificador + generación) | Gemini 2.0 Flash | API de Google |
+| LLM (clasificador + generación) | OpenAI / Gemini / Ollama, según `LLM_PROVIDER` | API externa u Ollama local |
 | API REST | FastAPI + LangChain | Docker |
 | Fuentes de datos | PubMed / PMC (NCBI Entrez) | API pública |
 
@@ -34,18 +36,28 @@ Usuario → API (FastAPI)
 - **Python 3.11+** — solo si quieres ejecutar los tests o notebooks localmente
 
 ### Credenciales (claves API)
-El sistema necesita dos claves que se configuran en un archivo `.env` en la raíz del proyecto:
 
-| Variable | Fuente | Para qué se usa |
-|---|---|---|
-| `NCBI_API_KEY` | https://www.ncbi.nlm.nih.gov/account/ | Aumenta el rate limit de PubMed de 3 a 10 req/s |
-| `GOOGLE_API_KEY` | https://aistudio.google.com/apikey | LLM para clasificación y generación de respuestas |
+El sistema elige el proveedor LLM mediante `LLM_PROVIDER` (`openai` | `gemini` | `ollama`, por defecto `openai`). **Solo hace falta configurar las variables del proveedor que vayas a usar** — las de los otros dos son opcionales.
 
-Crea el archivo `.env` en la raíz del proyecto:
+| Variable | Requerida cuando | Fuente | Para qué se usa |
+|---|---|---|---|
+| `NCBI_API_KEY` | Siempre (recomendada) | https://www.ncbi.nlm.nih.gov/account/ | Aumenta el rate limit de PubMed de 3 a 10 req/s |
+| `LLM_PROVIDER` | Siempre | — | `openai` \| `gemini` \| `ollama` (default `openai`) |
+| `OPENAI_API_KEY` | `LLM_PROVIDER=openai` | https://platform.openai.com/api-keys | LLM para clasificación y generación de respuestas |
+| `OPENAI_MODEL` | Opcional | — | Modelo OpenAI (default `gpt-4.1-mini`) |
+| `GEMINI_API_KEY` | `LLM_PROVIDER=gemini` | https://aistudio.google.com/apikey | LLM para clasificación y generación de respuestas |
+| `GEMINI_MODEL` | Opcional | — | Modelo Gemini (default `gemini-2.0-flash`) |
+| `OLLAMA_BASE_URL` | `LLM_PROVIDER=ollama` | — | URL de Ollama (default `http://localhost:11434`) |
+| `OLLAMA_LLM_MODEL` | Opcional | — | Modelo local servido por Ollama (default `llama3.1:8b`) |
+
+> `GOOGLE_API_KEY` se acepta como alias heredado de `GEMINI_API_KEY` (prioridad: `GEMINI_API_KEY` primero) para proyectos que ya la tuvieran configurada. Se recomienda migrar a `GEMINI_API_KEY`.
+
+Crea el archivo `.env` en la raíz del proyecto (puedes partir de `.env.example`), por ejemplo para usar OpenAI:
 
 ```
 NCBI_API_KEY=tu_clave_ncbi
-GOOGLE_API_KEY=tu_clave_google
+LLM_PROVIDER=openai
+OPENAI_API_KEY=tu_clave_openai
 ```
 
 > La `NCBI_API_KEY` es opcional pero recomendada. Sin ella el pipeline de ingesta funciona con límites más bajos.
@@ -90,10 +102,35 @@ Cuando aparezca `Application startup complete.` el sistema está listo.
 curl http://localhost:8000/health
 ```
 
-Respuesta esperada:
+Respuesta esperada (con `LLM_PROVIDER=openai`):
 ```json
-{"status": "ok", "qdrant": "ok", "llm": "gemini"}
+{
+  "status": "ok",
+  "qdrant": "ok",
+  "embedding_provider": "bge-m3",
+  "embedding_status": "loaded",
+  "llm_provider": "openai",
+  "llm_status": "configured"
+}
 ```
+
+`/health` comprueba tres componentes **independientes**, deliberadamente sin conflar unos con otros:
+
+- **`qdrant`** — `ok` si `GET /healthz` responde, `unreachable (...)` si no.
+- **`embedding_provider` / `embedding_status`** — BGE-M3 corre en proceso (vía `sentence-transformers`, sin red ni dependencia de Ollama). `embedding_status` es `loaded` si el modelo ya está instanciado en memoria (se carga una única vez al arrancar el proceso) o `not loaded`/`error (...)` si algo falló. **No** se recalcula un embedding real en cada petición a `/health` para mantenerlo barato — esa prueba funcional vive en `test/test_health.py`.
+- **`llm_provider` / `llm_status`** — depende del proveedor activo (`LLM_PROVIDER`):
+  - `openai` / `gemini` → `configured` si la API key correspondiente está presente, `misconfigured (...)` si falta.
+  - `ollama` → `reachable` si responde `GET /api/tags`, `unreachable (...)` si no.
+
+  No se hace ninguna llamada de generación (de pago) para calcular `llm_status` — solo se comprueba presencia de credenciales o, en el caso de Ollama, un ping local sin coste.
+
+`status` es `ok` únicamente cuando Qdrant está accesible, el modelo de embeddings está cargado y el proveedor LLM activo está `configured`/`reachable`; en cualquier otro caso es `degraded`. Que Ollama esté apagado, por ejemplo, **no** afecta a `embedding_status` (los embeddings no dependen de Ollama) ni a `llm_status` si el proveedor activo es OpenAI o Gemini.
+
+> **Cambiar de proveedor requiere reiniciar el proceso.** `LLM_PROVIDER` (y el resto de configuración del LLM) se resuelve una única vez al importar `src/services/llms.py`, al arrancar — no hay recarga en caliente. Para cambiar de proveedor en Docker:
+> ```bash
+> # tras editar LLM_PROVIDER (y su credencial) en .env
+> docker compose up -d --force-recreate api
+> ```
 
 ---
 
@@ -190,6 +227,36 @@ Todos los tests se ejecutan desde la raíz del proyecto. Requieren que Qdrant es
 
 ---
 
+### `test/test_llm_factory.py` — Selección de proveedor LLM
+
+Verifica la lógica de `get_llm()` (`src/services/llms.py`) sin llamar a ninguna API real: construcción del cliente por proveedor, error claro cuando falta la variable requerida, independencia entre proveedores (seleccionar uno no exige la clave de otro) y el alias heredado `GOOGLE_API_KEY` para Gemini. No requiere Qdrant ni ninguna credencial real.
+
+```bash
+python test/test_llm_factory.py
+```
+
+---
+
+### `test/test_openai_api_available.py` — Sanity check de un proveedor concreto
+
+Comprueba que la clave del proveedor activo funciona con una llamada real mínima. Ajusta `LLM_PROVIDER`/las variables correspondientes en `.env` antes de ejecutarlo.
+
+```bash
+python test/test_openai_api_available.py
+```
+
+---
+
+### `test/test_health.py` — Componentes de `/health` desacoplados
+
+Verifica que Qdrant, embeddings (BGE-M3) y el proveedor LLM se reportan de forma independiente en `/health`: happy path, `status == degraded` cuando Qdrant cae (parando y reiniciando el contenedor) sin que eso afecte a `embedding_status` ni a `llm_status`, y una prueba funcional real (`encode()`) del modelo de embeddings. Requiere la API completa corriendo en Docker — para el contenedor de Qdrant usa `docker compose stop/start`, dejándolo corriendo de nuevo al terminar.
+
+```bash
+python test/test_health.py
+```
+
+---
+
 ### `test/test_indexing.py` — Ingesta de prueba
 
 Ejecuta el pipeline completo de ingesta con una query predefinida sobre microbiota intestinal, permeabilidad e inflamación. Recrea la colección desde cero e indexa 10 artículos (abstracts PubMed + chunks PMC cuando hay texto completo disponible). Útil para verificar que todo el stack funciona correctamente tras un cambio.
@@ -266,7 +333,7 @@ project/
 │   ├── api/              # FastAPI: endpoints /health, /query, /ingest
 │   ├── ingest/           # Pipeline de ingesta: PubMed, PMC, chunking, indexación
 │   ├── rag/              # Chain RAG: clasificador, retrieval, prompts, estructuras
-│   ├── services/         # Embeddings (BGE-M3), LLM (Gemini), vector store (Qdrant)
+│   ├── services/         # Embeddings (BGE-M3), LLM (OpenAI/Gemini/Ollama), vector store (Qdrant)
 │   ├── data_actualization/ # Actualizadores PubMed y PMC
 │   └── config.py         # Configuración centralizada
 ├── test/                 # Tests end-to-end y unitarios
@@ -285,10 +352,15 @@ project/
 
 | Variable | Requerida | Valor por defecto | Descripción |
 |---|---|---|---|
-| `GOOGLE_API_KEY` | Sí | — | Clave API de Google Gemini |
 | `NCBI_API_KEY` | Recomendada | — | Clave API de NCBI para PubMed |
+| `LLM_PROVIDER` | No | `openai` | Proveedor LLM activo: `openai` \| `gemini` \| `ollama` |
+| `OPENAI_API_KEY` | Si `LLM_PROVIDER=openai` | — | Clave API de OpenAI |
+| `OPENAI_MODEL` | No | `gpt-4.1-mini` | Modelo OpenAI |
+| `GEMINI_API_KEY` | Si `LLM_PROVIDER=gemini` | — | Clave API de Google Gemini (`GOOGLE_API_KEY` como alias heredado) |
+| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Modelo Gemini |
 | `QDRANT_URL` | No | `http://localhost:6333` | URL de Qdrant (en Docker: `http://qdrant:6333`) |
-| `OLLAMA_BASE_URL` | No | `http://localhost:11434` | URL de Ollama (alternativa local al LLM) |
+| `OLLAMA_BASE_URL` | Si `LLM_PROVIDER=ollama` | `http://localhost:11434` | URL de Ollama |
+| `OLLAMA_LLM_MODEL` | No | `llama3.1:8b` | Modelo servido por Ollama |
 
 ---
 
@@ -296,4 +368,5 @@ project/
 
 - El modelo BGE-M3 (~1.1 GB) se descarga automáticamente en el primer `docker compose up --build` y se cachea en un volumen Docker (`huggingface_cache`). Los rebuilds posteriores no lo vuelven a descargar.
 - Los datos de Qdrant persisten en `./qdrant_data` aunque se reinicie o reconstruya el contenedor.
-- El código de integración con Ollama (llama3.1:8b) está disponible comentado en `src/services/llms.py` como alternativa local al LLM si se dispone de GPU.
+- El `Dockerfile` instala `torch` en su variante CPU-only (índice oficial de PyTorch) antes del resto de dependencias — `sentence-transformers` solo lo usa con `device="cpu"`; el wheel por defecto de PyPI en Linux arrastraría ~2 GB de librerías CUDA innecesarias.
+- Para usar Ollama en local necesitas tenerlo instalado y corriendo aparte (no es un servicio de este `docker-compose.yml`); en Docker, `OLLAMA_BASE_URL` debe apuntar a `http://host.docker.internal:11434` (ya configurado así en `docker-compose.yml`) para que el contenedor alcance el Ollama del host.
