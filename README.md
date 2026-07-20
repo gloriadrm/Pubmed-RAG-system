@@ -1,6 +1,42 @@
+
+Adaptive Retrieval • PubMed • PMC • Qdrant • BGE-M3 • LangChain • FastAPI • Docker
+
+---
+
 # Biomedical RAG System
 
-Sistema de Recuperación Aumentada con Generación (RAG) sobre artículos biomédicos indexados desde PubMed y PubMed Central (PMC). Permite consultas en lenguaje natural sobre un corpus científico personalizado, clasificando automáticamente el tipo de pregunta y recuperando los fragmentos más relevantes antes de generar una respuesta fundamentada.
+Biomedical RAG es un sistema RAG biomédico construido sobre PubMed y PubMed Central, capaz de clasificar automáticamente consultas científicas, recuperar evidencia mediante estrategias de retrieval adaptativo y generar respuestas fundamentadas con trazabilidad hasta los artículos originales.
+
+---
+
+## Índice
+
+- [Características](#características)
+- [Arquitectura general](#arquitectura-general)
+- [Requisitos previos](#requisitos-previos)
+- [Instalación y puesta en marcha](#instalación-y-puesta-en-marcha)
+- [Ingesta de datos](#ingesta-de-datos)
+- [Uso de la API](#uso-de-la-api)
+- [Interfaz web](#interfaz-web)
+- [Resultados](#resultados)
+- [Tests](#tests)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Variables de entorno](#variables-de-entorno)
+- [Notas](#notas)
+
+---
+
+## Características
+
+- **Retrieval adaptativo** — la estrategia de recuperación cambia según el tipo de pregunta, no una búsqueda única para todos los casos.
+- **Clasificación automática de consultas** — un router distingue entre resumen temático, artículo concreto, comparación transversal y preguntas fuera de dominio.
+- **Ingesta desde PubMed + PMC** — metadatos y abstracts de PubMed, texto completo estructurado por secciones desde PubMed Central.
+- **Actualización incremental del corpus** — revisa altas, revisiones y retractaciones sin reprocesar la colección completa, en un job asíncrono que no bloquea la API.
+- **Arquitectura multiproveedor de LLM** — OpenAI, Gemini u Ollama, intercambiables mediante una variable de entorno.
+- **Embeddings BGE-M3** — modelo de embeddings ejecutado localmente, seleccionado tras una evaluación comparativa frente a modelos biomédicos especializados.
+- **Respuestas fundamentadas (grounding)** — cada afirmación se cita por número de fuente; el sistema declara explícitamente cuándo la evidencia es insuficiente.
+- **Despliegue en Docker** — API y base de datos vectorial contenerizadas, reproducibles con un único `docker compose up`.
+- **Interfaz web** — consulta, ingesta y actualización del corpus sin necesidad de tocar la API directamente.
 
 ---
 
@@ -25,6 +61,10 @@ El proveedor LLM (clasificador + generación) es intercambiable mediante la vari
 | LLM (clasificador + generación) | OpenAI / Gemini / Ollama, según `LLM_PROVIDER` | API externa u Ollama local |
 | API REST | FastAPI + LangChain | Docker |
 | Fuentes de datos | PubMed / PMC (NCBI Entrez) | API pública |
+
+<p align="center">
+  <img src="docs/screenshots/arquitectura_general.png" alt="Diagrama de arquitectura del sistema" width="700">
+</p>
 
 ---
 
@@ -205,6 +245,23 @@ El sistema clasifica automáticamente la pregunta en uno de estos tipos:
 }
 ```
 
+### Actualización del corpus: `GET /corpus/status`, `POST /corpus/update`, `GET /corpus/update/status`
+
+A diferencia de `/ingest` (que amplía el corpus con artículos nuevos sobre un tema), la actualización revisa el contenido ya indexado en busca de cambios: revisiones o retiradas en PubMed, y cambios de licencia, retractaciones o exclusiones de la subcolección OA en PMC.
+
+```bash
+# Estado actual del corpus (recuentos, licencias, última actualización)
+curl http://localhost:8000/corpus/status
+
+# Lanza una actualización en segundo plano y devuelve un job_id
+curl -X POST http://localhost:8000/corpus/update
+
+# Consulta el progreso/resultado del job (pensado para polling cada 3s)
+curl http://localhost:8000/corpus/update/status
+```
+
+`POST /corpus/update` no bloquea la conexión: encola el trabajo en un executor en segundo plano y responde de inmediato con `{"job_id": "...", "state": "running"}`. El progreso (fase `pubmed`/`pmc`, resultado con documentos revisados/actualizados/eliminados) se consulta sondeando `/corpus/update/status`. Una petición concurrente mientras ya hay un job en curso responde `409`; repetir la petición demasiado pronto tras la última ejecución responde `429`.
+
 ---
 
 ## Interfaz web
@@ -213,13 +270,86 @@ Además de la API, hay una interfaz de demo servida en la raíz:
 
 http://localhost:8000/
 
-Permite lanzar preguntas contra `/query` (con ejemplos precargados para los tres tipos de
-routing), lanzar ingestas contra `/ingest` y ver el estado de salud del sistema (`/health`).
+Incluye tres pestañas:
 
-> **Limitación conocida:** `/ingest` es síncrono y bloqueante — la petición HTTP permanece
-> abierta durante todo el proceso de ingesta (puede tardar varios minutos). Una versión de
-> producción debería lanzarlo como job asíncrono con `job_id` y un endpoint de estado en
-> lugar de depender de una conexión HTTP larga.
+- **Consultar** — lanza preguntas contra `/query`, con ejemplos precargados para los tres tipos de routing y las fuentes citadas en la respuesta.
+- **Ingestar** — lanza ingestas de artículos nuevos contra `/ingest`.
+- **Actualizar** — muestra el estado del corpus (`/corpus/status`: recuentos por fuente, desglose de licencias, última actualización) y permite lanzar una actualización (`POST /corpus/update`), con sondeo automático de progreso vía `/corpus/update/status` y un resumen del resultado al finalizar.
+
+<p align="center">
+  <img src="docs/screenshots/consultar_preview.png" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/ingesta.png" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/update finished.png" width="700">
+</p>
+
+
+El estado de salud del sistema puede consultarse en `/health`.
+
+> **Limitación conocida:** `/ingest` sigue siendo síncrono y bloqueante — la petición HTTP permanece abierta durante todo el proceso de ingesta (puede tardar varios minutos). `/corpus/update` sí resuelve esta limitación mediante un job asíncrono con `job_id` y endpoint de estado; llevar `/ingest` al mismo patrón queda como trabajo futuro.
+
+
+---
+
+## Resultados
+
+El sistema adapta automáticamente la estrategia de recuperación al tipo de consulta detectado. Dependiendo de la intención del usuario, recupera información desde los **abstracts de PubMed**, el **texto completo de PubMed Central** o realiza una búsqueda transversal sobre múltiples artículos antes de generar una respuesta fundamentada.
+
+### Resumen temático
+
+Para consultas generales sobre un tema biomédico, el sistema recupera los abstracts más relevantes de PubMed y genera una síntesis respaldada por las publicaciones recuperadas.
+
+<p align="center">
+  <img src="docs/screenshots/consulta resumen temático.png" width="700">
+</p>
+
+---
+
+### Consulta sobre un artículo concreto
+
+Cuando la consulta hace referencia a un artículo específico (por título, autores o identificador), el sistema restringe la búsqueda al texto completo de ese trabajo en PubMed Central, permitiendo responder preguntas de detalle sobre su metodología, resultados o conclusiones.
+
+<p align="center">
+  <img src="docs/screenshots/consulta articulo 1.png" width="700">
+  <img src="docs/screenshots/consulta articulo 2.png" width="700">
+</p>
+
+---
+
+### Consulta transversal
+
+Para preguntas que requieren relacionar evidencia procedente de varios artículos, el sistema realiza una búsqueda sobre todo el corpus de texto completo y recupera los fragmentos más relevantes mediante **Maximum Marginal Relevance (MMR)**, reduciendo la redundancia entre documentos.
+
+<p align="center">
+  <img src="docs/screenshots/Consulta transversal 1.png" width="700">
+  <img src="docs/screenshots/Consulta transversal 2.png" width="700">
+</p>
+
+---
+
+### Trazabilidad de las respuestas
+
+Todas las respuestas se generan exclusivamente a partir del contexto recuperado. La interfaz permite inspeccionar los **fragmentos exactos** utilizados para fundamentar cada afirmación, proporcionando trazabilidad completa hasta la evidencia científica original.
+
+<p align="center">
+  <img src="docs/screenshots/consulta transversal fuentes fragmentos.png" width="700">
+</p>
+
+---
+
+### Consultas fuera del dominio
+
+El sistema identifica automáticamente las consultas que quedan fuera del ámbito biomédico y evita generar respuestas apoyándose en información no relacionada con el corpus científico indexado.
+
+<p align="center">
+  <img src="docs/screenshots/consulta fuera de dominio.png" width="700">
+</p>
+
 
 ---
 
