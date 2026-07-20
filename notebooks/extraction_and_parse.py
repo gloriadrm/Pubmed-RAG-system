@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 import requests
 from xml.etree import ElementTree as ET
 from sentence_transformers import SentenceTransformer, util
-from google import genai
 
 import time
 import pandas as pd
@@ -11,7 +10,6 @@ import torch
 
 load_dotenv()
 ncbi_api_key = os.getenv('NCBI_API_KEY')
-google_api_key = os.getenv('GOOGLE_API_KEY')
 
 
 # -------------- ESTRAER IDS + ABSTRACT + METADATA --------------

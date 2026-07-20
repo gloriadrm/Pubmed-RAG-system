@@ -23,9 +23,23 @@ services:
       # Ollama corre en el host (Mac), no dentro de Docker
       # host.docker.internal resuelve a la IP del Mac desde dentro del contenedor
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Proveedor LLM activo y credenciales — ver .env.example. Los valores
+      # se resuelven desde el .env de este directorio (Compose lo lee
+      # automáticamente para sustitución; nada va hardcodeado aquí). Listados
+      # explícitamente para dejar claro qué variables consume la API, aunque
+      # `env_file` (más abajo) ya las inyectaría igualmente.
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - OLLAMA_LLM_MODEL=${OLLAMA_LLM_MODEL:-llama3.1:8b}
     volumes:
       # Datos persistentes (OA CSV, last_update tracker)
       - ./data:/app/data
+      # Frontend estático — montado en modo lectura para poder iterar sin rebuild
+      - ./static:/app/static:ro
       # Caché del modelo bge-m3 — evita re-descargarlo en cada rebuild
       - huggingface_cache:/root/.cache/huggingface
     env_file:

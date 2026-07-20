@@ -1,26 +1,52 @@
 """
 structures.py
 -------------
-Modelos Pydantic para la salida estructurada del clasificador.
+Modelos y tipos compartidos del pipeline RAG.
 
-El LLM devuelve un SourceSelection indicando:
-  - query_type: caso de uso detectado
-  - pmc_id:     solo para specific_query, el PMC ID del artículo concreto
-  - reason:     justificación (útil para debugging y observabilidad)
+  SourceSelection   → salida estructurada del clasificador LLM
+  RetrievalResult    → salida del retrieval real (puede diferir de SourceSelection
+                       si hubo degradación, un pmc_id forzado por el request, etc.)
+  normalize_pmc_id  → validación/normalización de PMC IDs, compartida entre la
+                       frontera de la API (QueryRequest) y el pipeline interno
 
-Casos de uso:
+Casos de uso (QueryType):
   thematic_summary  → busca en abstracts PubMed (source=pubmed)
   specific_query    → busca en texto completo de UN artículo concreto (source=pmc + pmc_id)
   transversal_query → busca en texto completo de TODOS los artículos (source=pmc)
-  none              → pregunta fuera del dominio biomédico
+  none              → pregunta fuera del dominio biomédico o de las capacidades del sistema
 """
 
+import re
+from dataclasses import dataclass, field
 from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
+from langchain_core.documents import Document
+
+QueryType = Literal["thematic_summary", "specific_query", "transversal_query", "none"]
+
+
+def normalize_pmc_id(value: str) -> str:
+    """
+    Normaliza un PMC ID a formato 'PMC' + dígitos. Acepta variantes con o sin
+    prefijo 'PMC' (en cualquier capitalización) y espacios circundantes.
+
+    Lanza ValueError si el resultado no matchea 'PMC' + dígitos — usado como
+    field_validator en QueryRequest para que FastAPI devuelva un 422 claro
+    ante un formato inválido, en vez de degradar silenciosamente.
+    """
+    normalized = value.strip().upper()
+    if normalized.isdigit():
+        normalized = f"PMC{normalized}"
+    if not re.fullmatch(r"PMC\d+", normalized):
+        raise ValueError(
+            "El PMC ID debe tener el formato PMC seguido de dígitos, por ejemplo PMC12345678."
+        )
+    return normalized
 
 
 class SourceSelection(BaseModel):
-    query_type: Literal["thematic_summary", "specific_query", "transversal_query", "none"] = Field(
+    query_type: QueryType = Field(
         ...,
         description=(
             "Classify the user's question into exactly one of the following query types:\n\n"
@@ -42,8 +68,8 @@ class SourceSelection(BaseModel):
             "The goal is not to summarize abstracts broadly, but to retrieve detailed evidence from "
             "sections of several articles. Examples: 'What do studies say about Lactobacillus reuteri "
             "in inflammation?', 'Which papers report changes in intestinal permeability after probiotic use?'.\n\n"
-            "4. 'none': use this when the question is outside the biomedical domain or cannot be answered "
-            "from the indexed PubMed/PMC corpus."
+            "4. 'none': use this when the question is outside the biomedical domain, or clearly outside "
+            "the capabilities of this system (a biomedical literature RAG assistant)."
         )
     )
 
@@ -89,3 +115,17 @@ class SourceSelection(BaseModel):
             "specific paper reference, or cross-paper full-text evidence request."
         )
     )
+
+
+@dataclass
+class RetrievalResult:
+    """
+    Resultado real del retrieval — puede diferir de SourceSelection.query_type
+    cuando el request trae un pmc_id explícito (que tiene prioridad absoluta,
+    incluso sobre query_type='none') o cuando specific_query degrada a
+    transversal_query por no poder resolver un artículo único.
+    """
+    docs: list[Document] = field(default_factory=list)
+    retrieval_strategy: QueryType = "none"
+    resolved_pmc_id: Optional[str] = None
+    retrieval_note: Optional[str] = None

@@ -39,3 +39,13 @@ notebooks/.ipynb_checkpoints/
 
 # ── Debug ─────────────────────────────────────────────────
 debug/
+test/frontend 
+
+# ── Data ──────────────────────────────────────────────────
+data/
+
+# ── Superpowers ───────────────────────────────────────────
+.superpowers/
+.worktrees/
+
+

@@ -1,0 +1,510 @@
+:root {
+  --fg: #111;
+  --bg: #fff;
+  --muted: #666;
+  --border: #e5e5e5;
+  --chip-bg: #f2f2f2;
+  --accent: #111;
+  --accent-fg: #fff;
+  --ok: #1a7f37;
+  --error: #c1121f;
+  --unknown: #999;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 0 24px 48px;
+  max-width: 1000px;
+  margin-inline: auto;
+}
+
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px 0 12px;
+}
+
+.site-header h1 { font-size: 20px; margin: 0; }
+
+.health {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.health-item { display: flex; align-items: center; gap: 4px; }
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--unknown);
+}
+.dot[data-state="ok"] { background: var(--ok); }
+.dot[data-state="error"] { background: var(--error); }
+.dot[data-state="unknown"] { background: var(--unknown); }
+
+.refresh-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+  padding: 2px 4px;
+}
+.refresh-btn:hover { color: var(--fg); }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  border: none;
+  background: none;
+  padding: 10px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.tab-btn.active {
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--fg);
+}
+
+.tab-panel[hidden] { display: none; }
+
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 14px 0 6px;
+}
+
+textarea, input[type="text"], input[type="number"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--fg);
+}
+textarea { resize: vertical; }
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  align-items: center;
+}
+.examples-label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--chip-bg);
+  color: var(--fg);
+  border-radius: 16px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip:hover { background: #e8e8e8; }
+
+/* El campo PMC ID solo existe en el DOM visible cuando el workflow "Artículo
+   concreto" está activo (ver query.js) — no hay disclosure manual. La
+   transición es deliberadamente sutil (max-height + opacity), nunca un
+   "salto" brusco. */
+.pmc-field {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  margin-top: 0;
+  transition: max-height 0.2s ease, opacity 0.2s ease, margin-top 0.2s ease;
+}
+.pmc-field.visible {
+  max-height: 140px;
+  opacity: 1;
+  margin-top: 18px;
+}
+.field-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
+
+button[type="submit"], #update-submit, #update-confirm-accept {
+  margin-top: 16px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  padding: 10px 18px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button[type="submit"]:disabled, #update-submit:disabled { opacity: 0.6; cursor: default; }
+
+.btn-secondary {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 10px 18px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--chip-bg); }
+
+.warning {
+  background: #fff8e6;
+  border: 1px solid #f0dca0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #6b5200;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.loading[hidden] { display: none; }
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.result, .status {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* -------------- Pipeline de la consulta -------------- */
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.pipeline-step { flex: 1 1 180px; min-width: 160px; }
+
+.pipeline-step-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.pipeline-step-value { font-size: 13px; font-weight: 600; margin-top: 2px; }
+
+.pipeline-arrow {
+  align-self: center;
+  color: var(--muted);
+  font-size: 14px;
+  padding-top: 14px;
+}
+
+.pipeline-detail, .pipeline-subdetail { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pipeline-detail summary, .pipeline-subdetail summary { cursor: pointer; color: var(--muted); }
+.pipeline-detail p { margin: 6px 0 0; color: var(--fg); }
+.pipeline-subdetail pre { white-space: pre-wrap; font-size: 11px; margin-top: 4px; }
+
+.retrieval-note { margin-top: 16px; font-size: 12px; color: var(--muted); }
+
+.section-header {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin: 32px 0 16px;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.answer { margin-top: 8px; line-height: 1.6; white-space: pre-wrap; }
+
+/* -------------- Fuentes -------------- */
+
+.sources { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px; }
+
+.source-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.source-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.source-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+  margin-top: 2px;
+}
+a.source-title:hover { text-decoration: underline; }
+
+.source-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.source-excerpt-toggle { margin-top: 8px; }
+.source-excerpt-toggle summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  list-style: none;
+}
+.source-excerpt-toggle summary::-webkit-details-marker { display: none; }
+.source-excerpt-toggle summary:hover { color: var(--fg); }
+
+.source-excerpt {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+
+.error-box {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border: 1px solid #f3b8b8;
+  background: #fff5f5;
+  border-radius: 10px;
+  color: #7a1212;
+  font-size: 13px;
+}
+.error-box pre { white-space: pre-wrap; font-size: 12px; margin-top: 8px; }
+
+/* -------------- Ingestar / Actualizar: checklist de resultado -------------- */
+
+.update-checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.update-checklist li { color: var(--ok); }
+
+.update-duration { margin-top: 12px; font-size: 12px; color: var(--muted); }
+
+.result details, .status details {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.result details summary, .status details summary { cursor: pointer; color: var(--muted); }
+.result details pre, .status details pre {
+  white-space: pre-wrap;
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--fg);
+}
+
+/* -------------- Pestaña Actualizar --------------- */
+
+.corpus-status {
+  padding: 20px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 24px;
+}
+
+.corpus-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-top: 12px;
+}
+
+.corpus-stat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 90px;
+}
+.corpus-stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.corpus-stat-value { font-size: 20px; font-weight: 700; }
+
+.corpus-licenses { margin-top: 20px; }
+.corpus-licenses-title-row { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.corpus-licenses-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  margin: 0;
+}
+.corpus-licenses .corpus-stat-row {
+  flex-direction: row;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.corpus-licenses .corpus-stat-value { font-size: 13px; font-weight: 600; }
+
+/* -------------- Icono de ayuda + tooltip (sin librerías externas) -------------- */
+
+.help-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: help;
+}
+.help-icon:hover, .help-icon:focus { color: var(--fg); outline: none; }
+.help-icon:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; border-radius: 50%; }
+
+.help-icon .tooltip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+  z-index: 200;
+  pointer-events: none;
+}
+/* Flecha apuntando al icono (lado izquierdo del tooltip) */
+.help-icon .tooltip::after {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: #1a1a1a;
+}
+/* Variante cuando no cabe a la derecha (ver repositionTooltip en actualizar.js) */
+.help-icon .tooltip.tooltip-left {
+  left: auto;
+  right: calc(100% + 10px);
+}
+.help-icon .tooltip.tooltip-left::after {
+  right: auto;
+  left: 100%;
+  border-right-color: transparent;
+  border-left-color: #1a1a1a;
+}
+.help-icon:hover .tooltip, .help-icon:focus .tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.help-icon .tooltip strong { display: block; margin-bottom: 6px; font-size: 13px; color: #fff; }
+.help-icon .tooltip p { margin: 6px 0; color: #fff; }
+.help-icon .tooltip .tooltip-examples-label { margin: 8px 0 2px; }
+.help-icon .tooltip ul { margin: 0 0 6px; padding-left: 16px; }
+.help-icon .tooltip li { margin-bottom: 3px; }
+
+.corpus-last-updated { margin: 18px 0 0; font-size: 12px; color: var(--muted); }
+
+.update-action { margin-top: 8px; }
+.update-description { font-size: 13px; color: var(--muted); line-height: 1.5; max-width: 560px; }
+
+.update-loading-note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+
+/* -------------- Modal de confirmación -------------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+.modal-overlay[hidden] { display: none; }
+
+.modal {
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+.modal h3 { margin: 0 0 10px; font-size: 16px; }
+.modal p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.modal-actions button { margin-top: 0; }

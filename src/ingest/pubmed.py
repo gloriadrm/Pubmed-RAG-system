@@ -5,7 +5,6 @@ from xml.etree import ElementTree as ET
 
 load_dotenv()
 ncbi_api_key = os.getenv('NCBI_API_KEY')
-google_api_key = os.getenv('GOOGLE_API_KEY')
 
 
 # -------------- ESTRAER IDS + ABSTRACT + METADATA --------------

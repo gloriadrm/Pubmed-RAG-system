@@ -51,7 +51,10 @@ classifier_prompt = ChatPromptTemplate.from_messages([
         " - 'What sample sizes were used in probiotic intervention studies?'\n\n"
         
         "4. none\n"
-        "Use this when the question is outside the biomedical domain or cannot be answered from the indexed corpus.\n\n"
+        "Use this when the question is outside the biomedical domain, or clearly outside the capabilities "
+        "of this system (a biomedical literature RAG assistant). Do not use this just because the indexed "
+        "corpus might lack relevant documents on an otherwise biomedical topic — that is a retrieval concern, "
+        "not a classification one.\n\n"
         
         "Extraction rules:\n"
         " - Return a PMC ID only if explicitly mentioned (format: 'PMC' followed by digits).\n"

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biomedical RAG — Demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>Biomedical RAG</h1>
+    <div class="health" id="health">
+      <span class="health-item" id="health-api">API <span class="dot" data-state="unknown"></span></span>
+      <span class="health-item" id="health-qdrant">Qdrant <span class="dot" data-state="unknown"></span></span>
+      <span class="health-item" id="health-embeddings">Embeddings: BGE-M3 <span class="dot" data-state="unknown"></span></span>
+      <span class="health-item" id="health-llm"><span id="health-llm-label">LLM</span> <span class="dot" data-state="unknown"></span></span>
+      <button class="refresh-btn" id="health-refresh" type="button" title="Actualizar estado">↻</button>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="query" role="tab" aria-selected="true">Consultar</button>
+      <button class="tab-btn" data-tab="ingest" role="tab" aria-selected="false">Ingestar</button>
+      <button class="tab-btn" data-tab="update" role="tab" aria-selected="false">Actualizar</button>
+    </nav>
+
+    <section id="tab-query" class="tab-panel" role="tabpanel">
+      <form id="query-form">
+        <label for="question">Pregunta</label>
+        <textarea id="question" name="question" rows="3"
+                  placeholder="Escribe una pregunta sobre el corpus biomédico indexado…" required></textarea>
+
+        <div class="examples">
+          <span class="examples-label">Ejemplos:</span>
+          <button type="button" class="chip"
+                  data-workflow="thematic_summary"
+                  data-example="¿Qué evidencia existe sobre la relación entre microbiota intestinal y depresión?">
+            📄 Resumen temático
+          </button>
+          <button type="button" class="chip"
+                  data-workflow="specific_query"
+                  data-example="¿Qué metodología utilizó el estudio de Gudnadottir sobre microbiota vaginal?">
+            🔎 Artículo concreto
+          </button>
+          <button type="button" class="chip"
+                  data-workflow="transversal_query"
+                  data-example="¿Qué mecanismos conectan los probióticos con la mejora del síndrome metabólico según los distintos estudios?">
+            ⚖ Comparación transversal
+          </button>
+          <button type="button" class="chip"
+                  data-workflow="none"
+                  data-example="¿Qué tratamiento debería seguir para mi enfermedad?">
+            🚫 Fuera de dominio
+          </button>
+        </div>
+
+        <div class="pmc-field" id="pmc-field">
+          <label for="pmc-id">PMC ID</label>
+          <input type="text" id="pmc-id" name="pmc_id" placeholder="PMC12345678 o 12345678">
+          <p class="field-hint">Opcional: indica el PMC ID si quieres apuntar directamente a un artículo. Si lo dejas vacío, el sistema intentará identificarlo a partir de tu pregunta (autor, título…).</p>
+        </div>
+
+        <button type="submit" id="query-submit">Preguntar</button>
+      </form>
+
+      <div id="query-result" class="result" hidden></div>
+      <div id="query-error" class="error-box" hidden></div>
+    </section>
+
+    <section id="tab-ingest" class="tab-panel" role="tabpanel" hidden>
+      <p class="warning">
+        ⚠ La ingesta puede tardar varios minutos (búsqueda en PubMed, cruce con PMC,
+        chunking e indexación). No cierres esta pestaña mientras esté en curso.
+      </p>
+      <form id="ingest-form">
+        <label for="ingest-query">Query temática</label>
+        <input type="text" id="ingest-query" name="query"
+               placeholder="p. ej. gut microbiota intestinal permeability" required>
+
+        <label for="ingest-n">Número de artículos</label>
+        <input type="number" id="ingest-n" name="n" value="10" min="1" max="100">
+
+        <button type="submit" id="ingest-submit">Ingestar</button>
+      </form>
+
+      <div id="ingest-loading" class="loading" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        Ingestando… puede tardar varios minutos, no cierres esta pestaña.
+      </div>
+      <div id="ingest-status" class="status" hidden></div>
+      <div id="ingest-error" class="error-box" hidden></div>
+    </section>
+
+    <section id="tab-update" class="tab-panel" role="tabpanel" hidden>
+      <div class="corpus-status">
+        <h3 class="section-header">Estado del corpus</h3>
+        <div class="corpus-stats" id="corpus-stats"></div>
+        <div class="corpus-licenses" id="corpus-licenses"></div>
+        <p class="corpus-last-updated" id="corpus-last-updated"></p>
+      </div>
+
+      <div class="update-action">
+        <p class="update-description">
+          Esta operación consulta PubMed y PubMed Central para detectar artículos nuevos,
+          modificados o retirados entre los ya indexados, y actualiza el corpus. No amplía
+          el corpus — eso es lo que hace la pestaña Ingestar. Puede tardar varios minutos.
+        </p>
+        <button type="button" id="update-submit">Actualizar corpus</button>
+      </div>
+
+      <div id="update-loading" class="loading" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="update-loading-label">Actualizando…</span>
+      </div>
+      <p class="update-loading-note" id="update-loading-note" hidden>
+        La actualización continuará aunque cambies de pestaña.
+      </p>
+      <div id="update-result" class="result" hidden></div>
+      <div id="update-error" class="error-box" hidden></div>
+    </section>
+  </main>
+
+  <div id="update-confirm-modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="update-confirm-title">
+      <h3 id="update-confirm-title">¿Deseas iniciar la actualización del corpus?</h3>
+      <p>Se consultarán los servicios de NCBI y se actualizará la base vectorial. Puede tardar varios minutos.</p>
+      <div class="modal-actions">
+        <button type="button" id="update-confirm-cancel" class="btn-secondary">Cancelar</button>
+        <button type="button" id="update-confirm-accept">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

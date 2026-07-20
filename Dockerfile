@@ -11,6 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # para que pip pueda instalar el proyecto y sus dependencias en un solo paso
 COPY pyproject.toml .
 COPY src/ ./src/
+COPY static/ ./static/
+
+# sentence-transformers arrastra torch como dependencia transitiva, pero el
+# wheel por defecto de PyPI para Linux incluye el runtime CUDA completo
+# (~2 GB de librerías nvidia-*) aunque el proyecto solo usa device="cpu"
+# (ver src/services/embeddings.py). Se instala primero la variante CPU-only
+# desde el índice oficial de PyTorch para que el paso siguiente la encuentre
+# ya satisfecha y no descargue CUDA.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Instala todas las dependencias declaradas en pyproject.toml
 # + registra el paquete src (necesario para que los imports absolutos funcionen)

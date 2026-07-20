@@ -25,9 +25,12 @@ DEFAULT_URL = "http://localhost:8000"
 def check_health(base_url: str):
     r = requests.get(f"{base_url}/health", timeout=5)
     data = r.json()
-    print(f"  qdrant : {data['qdrant']}")
-    print(f"  ollama : {data['ollama']}")
-    print(f"  status : {data['status']}")
+    print(f"  qdrant             : {data['qdrant']}")
+    print(f"  embedding_provider : {data['embedding_provider']}")
+    print(f"  embedding_status   : {data['embedding_status']}")
+    print(f"  llm_provider       : {data['llm_provider']}")
+    print(f"  llm_status         : {data['llm_status']}")
+    print(f"  status             : {data['status']}")
     if data["status"] != "ok":
         print("⚠ Algún servicio no está disponible. Continúa de todas formas...\n")
     return data["status"] == "ok"
