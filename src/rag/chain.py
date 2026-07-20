@@ -5,10 +5,7 @@ Pipeline RAG biomédico usando LangChain LCEL.
 
 Flujo:
   1. classifier_chain  → LLM clasifica la pregunta (SourceSelection)
-  2. get_context        → búsqueda semántica en Qdrant según el tipo detectado:
-       - thematic_summary   → source=pubmed (abstracts)
-       - specific_query     → source=pmc + pmc_id (si se extrajo del texto)
-       - transversal_query  → source=pmc (texto completo, todos los artículos)
+  2. get_context        → retrieval real en Qdrant (RetrievalResult)
   3. format_docs        → formatea los documentos recuperados como contexto para el LLM
   4. RunnableBranch     → respuesta RAG si está en scope, mensaje de fuera de dominio si no
 
@@ -18,6 +15,17 @@ Arquitectura LCEL:
   → .assign(context=format_docs)
   → RunnableBranch(in_scope → answer_chain, out_of_scope → no_scope_chain)
 
+Prioridad del pmc_id (ver get_context):
+  1. request_pmc_id  — pasado estructuradamente en el input del chain (QueryRequest.pmc_id,
+                        ya normalizado/validado en la frontera de la API). Tiene prioridad
+                        absoluta: fuerza retrieval_strategy='specific_query' incluso si el
+                        router clasificó la pregunta como 'none' — is_in_scope() decide el
+                        branch final según RetrievalResult.retrieval_strategy, no según
+                        source.query_type.
+  2. source.pmc_id   — extraído por el clasificador si la pregunta lo menciona explícitamente.
+  3. _resolve_pmc_id — autor → título → búsqueda semántica, solo si los dos anteriores fallan.
+  Si ninguno resuelve un pmc_id, specific_query degrada a transversal_query (con retrieval_note).
+
 Nota sobre filtros Qdrant:
   Todos los campos del payload están bajo el dict anidado "metadata".
   Los filtros usan dot notation: metadata.source, metadata.pmc_id, etc.
@@ -25,14 +33,16 @@ Nota sobre filtros Qdrant:
 """
 
 from operator import itemgetter
+from typing import Optional
 
+from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough, RunnableBranch
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 from src.config import RETRIEVAL_K_THEMATIC, RETRIEVAL_K_SPECIFIC, RETRIEVAL_K_TRANSVERSAL
 from src.rag.prompts import classifier_prompt, rag_prompt, out_of_scope_prompt
-from src.rag.structures import SourceSelection
+from src.rag.structures import SourceSelection, RetrievalResult, normalize_pmc_id
 from src.services.vector_store import qdrant_store
 from src.services.llms import llm_langchain
 
@@ -42,12 +52,51 @@ from src.services.llms import llm_langchain
 classifier_chain = classifier_prompt | llm_langchain.with_structured_output(SourceSelection)
 
 
+# -------------- HELPERS --------------
+
+def _try_normalize_pmc_id(value: Optional[str]) -> Optional[str]:
+    """
+    Como normalize_pmc_id, pero nunca lanza — usada dentro del pipeline (no en
+    la frontera de la API) para valores que ya deberían venir bien formados
+    (extraídos por el clasificador o resueltos desde Qdrant). Si por lo que
+    sea no lo están, se tratan como ausentes en vez de romper la petición.
+    """
+    if not value:
+        return None
+    try:
+        return normalize_pmc_id(value)
+    except ValueError:
+        return None
+
+
+def clean_document_content(doc: Document) -> str:
+    """
+    Limpia el page_content de un documento recuperado, quitando el prefijo
+    redundante de título que llevan los embedding_text originales. Los dos
+    formatos de origen usan separadores distintos (ver src/ingest/pmc.py y
+    src/ingest/pubmed.py):
+      PMC:    "título | sección | texto"  (separado por " | ")  → "texto"
+      PubMed: "título abstract"           (unidos por un espacio, sin " | ")
+              → se usa metadata['title'] para localizar y quitar el prefijo
+    """
+    content = doc.page_content
+    if " | " in content:
+        return content.split(" | ", 2)[-1].strip()
+
+    title = doc.metadata.get("title")
+    if title and content.startswith(title):
+        return content[len(title):].strip()
+
+    return content.strip()
+
+
 # -------------- RETRIEVAL --------------
 
-async def _resolve_pmc_id(question: str, source_sel) -> str | None:
+async def _resolve_pmc_id(question: str, source_sel: SourceSelection) -> str | None:
     """
-    Intenta identificar el pmc_id del artículo cuando el usuario no lo proporcionó
-    directamente. Se ejecuta solo para specific_query sin pmc_id explícito.
+    Intenta identificar el pmc_id del artículo cuando no vino ni en el request
+    ni extraído del texto por el clasificador. Se ejecuta solo para
+    specific_query sin pmc_id ya conocido.
 
     Estrategia en orden de prioridad:
       1. Filtro por autor en Qdrant (si el LLM extrajo author_last_name)
@@ -111,76 +160,107 @@ async def _resolve_pmc_id(question: str, source_sel) -> str | None:
     return None
 
 
-async def get_context(input_dict) -> list:
-    """
-    Búsqueda semántica en Qdrant según el tipo de consulta detectado.
+async def _search_thematic(question: str) -> list[Document]:
+    query_filter = Filter(
+        must=[FieldCondition(key="metadata.source", match=MatchValue(value="pubmed"))]
+    )
+    return await qdrant_store.asimilarity_search(question, k=RETRIEVAL_K_THEMATIC, filter=query_filter)
 
-      thematic_summary   → source=pubmed (abstracts)
-      transversal_query  → source=pmc (texto completo, todos los artículos)
-      specific_query     → two-stage:
-                            1. Resolver pmc_id si no viene explícito (autor / semántica PubMed)
-                            2. Búsqueda semántica source=pmc filtrada por pmc_id
+
+async def _search_transversal(question: str) -> list[Document]:
+    query_filter = Filter(
+        must=[FieldCondition(key="metadata.source", match=MatchValue(value="pmc"))]
+    )
+    return await qdrant_store.amax_marginal_relevance_search(
+        question, k=RETRIEVAL_K_TRANSVERSAL, fetch_k=RETRIEVAL_K_TRANSVERSAL * 3, filter=query_filter
+    )
+
+
+async def _retrieve_specific(pmc_id: str, question: str, override_note: Optional[str] = None) -> RetrievalResult:
+    """
+    Búsqueda specific_query sobre un único artículo ya identificado (venga del
+    request, del clasificador o de _resolve_pmc_id). Único punto que ejecuta
+    esta búsqueda filtrada — evita duplicarla entre las distintas vías de origen.
+    """
+    query_filter = Filter(
+        must=[
+            FieldCondition(key="metadata.source", match=MatchValue(value="pmc")),
+            FieldCondition(key="metadata.pmc_id", match=MatchValue(value=pmc_id)),
+        ]
+    )
+    docs = await qdrant_store.asimilarity_search(question, k=RETRIEVAL_K_SPECIFIC, filter=query_filter)
+
+    if not docs:
+        # El artículo se identificó (pmc_id resuelto), pero no hay chunks de texto
+        # completo indexados para él — típicamente porque su licencia bloqueó la
+        # descarga en el pipeline de ingesta (ver src/ingest/pipeline.py). Distinto
+        # de "no se pudo identificar ningún artículo" (ver degradación más abajo).
+        note = f"El artículo {pmc_id} fue identificado, pero su texto completo no está indexado."
+    else:
+        note = override_note
+
+    return RetrievalResult(docs=docs, retrieval_strategy="specific_query", resolved_pmc_id=pmc_id, retrieval_note=note)
+
+
+async def get_context(input_dict) -> RetrievalResult:
+    """
+    Retrieval real en Qdrant. Devuelve un RetrievalResult que puede diferir de
+    la clasificación original del router (input_dict["source"].query_type) —
+    ver la prioridad de pmc_id documentada en el docstring del módulo.
     """
     question = input_dict["question"]
-    source_sel = input_dict["source"]
+    source_sel: SourceSelection = input_dict["source"]
     query_type = source_sel.query_type
+    request_pmc_id = input_dict.get("request_pmc_id")  # ya normalizado por QueryRequest, o None
+
+    # Prioridad 1: pmc_id explícito del request — máxima prioridad, incluso
+    # sobre query_type='none'. Es un parámetro estructurado y determinista;
+    # no debe depender de que el clasificador probabilístico esté de acuerdo.
+    if request_pmc_id:
+        override_note = None
+        if query_type != "specific_query":
+            override_note = (
+                f"Se priorizó el PMC ID proporcionado explícitamente en la petición "
+                f"(el router había clasificado la pregunta como '{query_type}')."
+            )
+        return await _retrieve_specific(request_pmc_id, question, override_note=override_note)
 
     if query_type == "none":
-        return []
-
-    pmc_id = source_sel.pmc_id
-    effective_query_type = query_type
+        return RetrievalResult(retrieval_strategy="none")
 
     if query_type == "thematic_summary":
-        query_filter = Filter(
-            must=[FieldCondition(key="metadata.source", match=MatchValue(value="pubmed"))]
-        )
+        docs = await _search_thematic(question)
+        note = None if docs else "No se encontraron abstracts PubMed relevantes para la consulta."
+        return RetrievalResult(docs=docs, retrieval_strategy="thematic_summary", retrieval_note=note)
 
-    elif query_type == "specific_query":
-        # Etapa 1: resolver pmc_id si no lo tenemos ya
-        if not pmc_id:
-            pmc_id = await _resolve_pmc_id(question, source_sel)
+    if query_type == "transversal_query":
+        docs = await _search_transversal(question)
+        note = None if docs else "No se encontraron fragmentos de texto completo PMC relevantes para la consulta."
+        return RetrievalResult(docs=docs, retrieval_strategy="transversal_query", retrieval_note=note)
 
-        # Si no logramos resolverlo, degradamos explícitamente a transversal
-        if not pmc_id:
-            effective_query_type = "transversal_query"
-            query_filter = Filter(
-                must=[FieldCondition(key="metadata.source", match=MatchValue(value="pmc"))]
-            )
-        else:
-            query_filter = Filter(
-                must=[
-                    FieldCondition(key="metadata.source", match=MatchValue(value="pmc")),
-                    FieldCondition(key="metadata.pmc_id", match=MatchValue(value=pmc_id)),
-                ]
-            )
+    # query_type == "specific_query"
+    # Prioridad 2: pmc_id extraído por el clasificador del propio texto de la pregunta.
+    classifier_pmc_id = _try_normalize_pmc_id(source_sel.pmc_id)
+    if classifier_pmc_id:
+        return await _retrieve_specific(classifier_pmc_id, question)
 
-    else:  # transversal_query
-        query_filter = Filter(
-            must=[FieldCondition(key="metadata.source", match=MatchValue(value="pmc"))]
-        )
+    # Prioridad 3: resolución automática (autor → título → semántica).
+    resolved = _try_normalize_pmc_id(await _resolve_pmc_id(question, source_sel))
+    if resolved:
+        return await _retrieve_specific(resolved, question)
 
-    k_map = {
-        "thematic_summary": RETRIEVAL_K_THEMATIC,
-        "specific_query": RETRIEVAL_K_SPECIFIC,
-        "transversal_query": RETRIEVAL_K_TRANSVERSAL,
-    }
-
-    k = k_map.get(effective_query_type, RETRIEVAL_K_SPECIFIC)
-
-    if effective_query_type == "transversal_query":
-        docs = await qdrant_store.amax_marginal_relevance_search(
-            question, k=k, fetch_k=k * 3, filter=query_filter
-        )
-    else:
-        docs = await qdrant_store.asimilarity_search(question, k=k, filter=query_filter)
-    
-    # print(f"[DEBUG] query_type={effective_query_type}, k={k}, docs={len(docs)}")
-    return docs 
+    # Ninguna vía resolvió un pmc_id → degradación explícita a transversal_query.
+    docs = await _search_transversal(question)
+    return RetrievalResult(
+        docs=docs,
+        retrieval_strategy="transversal_query",
+        retrieval_note="No se pudo identificar un artículo PMC único; se realizó una búsqueda transversal.",
+    )
 
 
 def format_docs(input_dict) -> str:
-    docs = input_dict["source_context"]
+    retrieval: RetrievalResult = input_dict["source_context"]
+    docs = retrieval.docs
     if not docs:
         return "No se encontraron documentos relevantes en la base de datos."
 
@@ -190,15 +270,7 @@ def format_docs(input_dict) -> str:
         title   = meta.get("title", "Artículo sin título")
         section = meta.get("section", "")
         header  = f"[{i}] [{title} — {section}]" if section else f"[{i}] [{title}]"
-
-        # page_content tiene formato "título | sección | texto" (PMC)
-        # o "título | abstract" (PubMed) — quitamos el prefijo redundante
-        content = doc.page_content
-        if " | " in content:
-            # Eliminar hasta el último " | " para quedarnos solo con el texto útil
-            content = content.split(" | ", 2)[-1]
-
-        parts.append(f"{header}\n{content}")
+        parts.append(f"{header}\n{clean_document_content(doc)}")
 
     return "\n\n---\n\n".join(parts)
 
@@ -206,7 +278,14 @@ def format_docs(input_dict) -> str:
 # -------------- BRANCHING --------------
 
 def is_in_scope(input_dict) -> bool:
-    return input_dict["source"].query_type != "none"
+    """
+    Decide según la estrategia de retrieval REALMENTE ejecutada, no según la
+    clasificación original del router. Esto es lo que permite que un
+    request_pmc_id explícito fuerce una respuesta RAG incluso cuando el
+    router clasificó la pregunta aislada como 'none'.
+    """
+    retrieval: RetrievalResult = input_dict["source_context"]
+    return retrieval.retrieval_strategy != "none"
 
 
 answer_chain   = rag_prompt          | llm_langchain | StrOutputParser()
@@ -216,7 +295,7 @@ no_scope_chain = out_of_scope_prompt | llm_langchain | StrOutputParser()
 # -------------- PIPELINE COMPLETO --------------
 
 rag_chain = (
-    # Paso 1: clasificar la pregunta
+    # Paso 1: clasificar la pregunta (siempre sobre el texto original, sin modificar)
     RunnablePassthrough.assign(
         source=(itemgetter("question") | classifier_chain)
     )
@@ -227,7 +306,7 @@ rag_chain = (
     | RunnablePassthrough.assign(
         context=RunnableLambda(format_docs)
     )
-    # Paso 3: generar respuesta según si está en scope o no
+    # Paso 3: generar respuesta según la estrategia de retrieval efectiva
     | RunnableBranch(
         (is_in_scope, RunnablePassthrough.assign(answer=answer_chain)),
         RunnablePassthrough.assign(answer=no_scope_chain),

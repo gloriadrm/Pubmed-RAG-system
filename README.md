@@ -156,7 +156,17 @@ Ejecuta el pipeline completo con una query de ejemplo sobre microbiota intestina
 python test/test_indexing.py
 ```
 
-> La primera vez que se ejecuta descarga el catálogo OA de PMC (~500 MB) y lo guarda en `data/oa_file_list.csv` para usos posteriores.
+> La primera vez que se ejecuta descarga el mapeo PMID→PMCID (`PMC-ids.csv.gz`, ~240 MB comprimidos) y lo guarda en `data/PMC-ids.csv` para usos posteriores. La licencia y el estado de cada artículo se consultan aparte, individualmente — ver la nota sobre PMC Open Access más abajo.
+
+### PMC Open Access
+
+NCBI retiró `oa_file_list.csv` del FTP Service en 2026 ([anuncio oficial](https://ncbiinsights.ncbi.nlm.nih.gov/2026/02/12/pmc-article-dataset-distribution-services/); retirada definitiva en agosto de 2026). El sistema ya no descarga ni compara ningún catálogo OA global — ver `src/data_actualization/pmc_oa_client.py`:
+
+1. **Resolución PMID → PMCID** — vía `PMC-ids.csv.gz` (bulk, sigue vigente, no deprecado), cacheado en `data/PMC-ids.csv`.
+2. **Metadata OA por artículo** (licencia, retractación, última modificación) — vía el JSON individual público del bucket S3 `pmc-oa-opendata`, accesible sin credenciales por HTTPS. Se consulta artículo a artículo, solo para los que este sistema realmente indexa — no hay catálogo global que descargar ni diferenciar.
+3. **Descarga del texto completo** — sin cambios, vía E-Utilities eFetch (`src/ingest/pmc.py`); esta migración de NCBI no la afecta.
+
+Esta separación en tres responsabilidades independientes hace que el mantenimiento del corpus (`oa_updater.run_daily_update()`) solo necesite consultar los `pmc_id` ya indexados, en vez de descargar y diferenciar un catálogo de varios cientos de MB — más ligero y más apropiado para un corpus pequeño y curado que el modelo anterior.
 
 ---
 
@@ -307,7 +317,9 @@ python test/test_api.py --url http://localhost:8000
 
 ### `test/test_actualizations.py` — Pipeline de actualización incremental
 
-Ejecuta el pipeline completo de actualización: descarga los update files diarios de NLM para PubMed y compara el catálogo OA de PMC con la copia local para detectar artículos nuevos, modificados o eliminados, aplicando los cambios en Qdrant.
+Ejecuta el pipeline completo de actualización:
+- **PubMed** — descarga los update files diarios de NLM y aplica revisiones/borrados a los PMIDs ya indexados.
+- **PMC** — consulta, artículo a artículo, la metadata OA actual de cada `pmc_id` ya indexado (licencia, retractación, última modificación — ver [PMC Open Access](#pmc-open-access) más abajo) y aplica bajas o reingestas. Nunca amplía el corpus ni descarga/compara ningún catálogo global — solo revisa lo que ya está indexado.
 
 ```bash
 # Actualización completa (PubMed + PMC)
@@ -338,7 +350,7 @@ project/
 │   └── config.py         # Configuración centralizada
 ├── test/                 # Tests end-to-end y unitarios
 ├── notebooks/            # Exploración: extracción, embeddings, actualizaciones
-├── data/                 # Archivos de estado (oa_file_list.csv, last_update tracker)
+├── data/                 # Archivos de estado (PMC-ids.csv, last_update tracker)
 ├── qdrant_data/          # Volumen persistente de Qdrant (generado automáticamente)
 ├── qdrant_config/        # Configuración de Qdrant
 ├── docker-compose.yml

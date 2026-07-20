@@ -9,10 +9,41 @@ function setLoading(isLoading) {
   document.getElementById("ingest-loading").hidden = !isLoading;
 }
 
-function renderSuccess(message) {
+function renderSuccess(result) {
   const box = document.getElementById("ingest-status");
   box.hidden = false;
-  box.textContent = message;
+  box.innerHTML = "";
+
+  const list = document.createElement("ul");
+  list.className = "update-checklist";
+
+  const items = [`${result.articles_found} artículos encontrados`,
+                  `${result.pubmed_indexed} PubMed indexados`,
+                  `${result.pmc_found} PMC encontrados`];
+  if (result.pmc_excluded_license > 0) {
+    items.push(`${result.pmc_excluded_license} excluidos por licencia restrictiva`);
+  }
+  items.push(`${result.xml_downloaded} XML descargados`,
+             `${result.chunks_created} chunks creados`,
+             "Qdrant actualizado");
+
+  items.forEach((text) => {
+    const li = document.createElement("li");
+    li.textContent = `✔ ${text}`;
+    list.appendChild(li);
+  });
+  box.appendChild(list);
+
+  if (result.log && result.log.length) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Ver log";
+    details.appendChild(summary);
+    const pre = document.createElement("pre");
+    pre.textContent = result.log.join("\n");
+    details.appendChild(pre);
+    box.appendChild(details);
+  }
 }
 
 function renderError(message) {
@@ -50,7 +81,7 @@ export function initIngest() {
 
     try {
       const result = await postIngest(queryInput.value.trim(), Number(nInput.value));
-      renderSuccess(result.message);
+      renderSuccess(result);
     } catch (e) {
       renderError(e.message);
     } finally {

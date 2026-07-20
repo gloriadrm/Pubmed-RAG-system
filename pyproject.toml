@@ -25,6 +25,9 @@ dependencies = [
     "langchain-google-genai==4.2.7",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]

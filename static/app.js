@@ -1,6 +1,7 @@
 import { initHealth } from "./health.js";
 import { initQuery } from "./query.js";
 import { initIngest } from "./ingest.js";
+import { initActualizar } from "./actualizar.js";
 
 function initTabs() {
   const buttons = document.querySelectorAll(".tab-btn");
@@ -26,4 +27,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initHealth();
   initQuery();
   initIngest();
+  initActualizar();
 });

@@ -5,7 +5,10 @@ Pipeline unificado de actualización incremental.
 Ejecuta en orden:
 
   1. Actualización PubMed via update files diarios de NLM
-  2. Actualización PMC via diff del OA file list
+  2. Actualización PMC — solo para los pmc_ids ya indexados, consultando su
+     metadata OA individual (bucket público de NCBI en AWS). Sin CSV, sin
+     diff de catálogo global: oa_file_list.csv fue retirado por NCBI en
+     2026 (ver src/data_actualization/pmc_oa_client.py).
 
 Uso (desde el root del proyecto):
     python test/test_actualizations.py
@@ -17,7 +20,16 @@ Flags disponibles:
 """
 
 import sys
-sys.path.append('.')
+from pathlib import Path
+
+# Invocado como "python test/test_actualizations.py" (script, no módulo),
+# sys.path[0] es el directorio del script (test/), no la raíz del proyecto.
+# sys.path.append('.') no basta: se añade al FINAL, después del paquete
+# instalado en site-packages (build time, potencialmente obsoleto) — el
+# import de src.* resolvía silenciosamente contra esa copia congelada en
+# vez de contra estos mismos archivos. Insertar al principio garantiza que
+# siempre se usa el código real de este checkout.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 from src.ingest.indexer import client, COLLECTION_NAME
@@ -31,31 +43,6 @@ def count_points(source: str) -> int:
             must=[FieldCondition(key="metadata.source", match=MatchValue(value=source))]
         )
     ).count
-
-
-def get_indexed_pmc_ids() -> set[str]:
-    """Devuelve el conjunto de pmc_ids indexados en Qdrant (source=pmc)."""
-    indexed = set()
-    offset  = None
-    while True:
-        results, next_offset = client.scroll(
-            collection_name=COLLECTION_NAME,
-            scroll_filter=Filter(
-                must=[FieldCondition(key="metadata.source", match=MatchValue(value="pmc"))]
-            ),
-            limit=1000,
-            offset=offset,
-            with_payload=["metadata"],
-            with_vectors=False,
-        )
-        for point in results:
-            pmc_id = point.payload.get("metadata", {}).get("pmc_id")
-            if pmc_id:
-                indexed.add(str(pmc_id))
-        if next_offset is None:
-            break
-        offset = next_offset
-    return indexed
 
 
 def run_pubmed_update(dry_run: bool = False):
@@ -104,97 +91,64 @@ def run_pubmed_update(dry_run: bool = False):
         if dry_run:
             print("  [dry-run] Cambios calculados, Qdrant no modificado.")
         else:
-            apply_pubmed_updates(articles, deleted_pmids, indexed_pmids)
+            # apply_pubmed_updates devuelve los PMIDs efectivamente borrados —
+            # hay que restarlos de indexed_pmids aquí mismo: si no, un PMID
+            # borrado en este fichero seguiría figurando como "indexado" para
+            # los ficheros siguientes de esta misma ejecución, y una revisión
+            # posterior del mismo PMID lo resucitaría.
+            deleted = apply_pubmed_updates(articles, deleted_pmids, indexed_pmids)
+            indexed_pmids -= deleted
             save_last_processed_file(filename)
             print(f"  ✓ {filename} aplicado.")
 
 
 def run_pmc_update(dry_run: bool = False):
-    """Actualización incremental de chunks PMC via diff del OA file list."""
+    """
+    Actualización de chunks PMC — solo para los pmc_ids ya indexados,
+    consultando su metadata OA individual (sin CSV, sin diff de catálogo
+    global). Ver src/data_actualization/pmc_oa_client.py.
+    """
     print("\n" + "="*60)
-    print("BLOQUE 2 — Actualización PMC (OA file list diff)")
+    print("BLOQUE 2 — Actualización PMC (metadata OA individual)")
     print("="*60)
 
     from src.data_actualization.oa_updater import (
-        get_oa_df,
-        download_oa_csv,
-        load_oa_csv,
-        diff_oa_csv,
-        detect_pmc_removals,
-        reingest_changed_pmc,
-        LOCAL_OA,
-        DATA_DIR,
+        get_indexed_pmc_ids,
+        check_indexed_pmc_articles,
+        remove_pmc_fulltext,
+        reingest_pmc_articles,
     )
-    import shutil
-    from pathlib import Path
 
-    # Cargar OA CSV 
-    # (Primera ejecución: guardado en disco sin hacer diff al no haber versión anterior)
-    if not LOCAL_OA.exists():
-        print("→ No hay OA CSV local previo. Descargando por primera vez...")
-        get_oa_df(force_download=True)
-        print("→ OA CSV descargado. Nada más que actualizar en esta ejecución.")
-        return
-
-    print("Cargando OA CSV anterior...")
-    old_df = load_oa_csv(LOCAL_OA)
-    print(f"  → {len(old_df):,} entradas en OA CSV anterior")
-
-    # Descargar versión nueva a un temporal
-    tmp_path = LOCAL_OA.with_suffix(".new.csv")
-    print("Descargando OA file list actualizado (~100 MB)...")
-    from src.data_actualization.oa_updater import download_oa_csv, load_oa_csv
-    new_df = download_oa_csv(tmp_path)
-    print(f"  → {len(new_df):,} entradas en OA CSV nuevo")
-
-    # Cruce con Qdrant: solo nos interesan los pmc_ids que ya tenemos indexados
     print("Cargando PMC IDs indexados en Qdrant...")
     indexed_pmc_ids = get_indexed_pmc_ids()
     print(f"  → {len(indexed_pmc_ids)} PMC IDs indexados")
 
-    # --- Bajas: PMC IDs desaparecidos del catálogo o con licencia no permitida ---
-    removals_global = detect_pmc_removals(old_df, new_df)
-    removals = [p for p in removals_global if p in indexed_pmc_ids]
-    print(f"Bajas en OA CSV (global)    : {len(removals_global)}")
-    print(f"Bajas en colección  : {len(removals)}")
+    if not indexed_pmc_ids:
+        print("→ No hay artículos PMC indexados. Nada que actualizar.")
+        return
 
-    # --- Actualizaciones: last_updated cambiado ---
-    changed_df = diff_oa_csv(old_df, new_df)
-    changed_df = changed_df[changed_df["pmc_id"].isin(indexed_pmc_ids)].reset_index(drop=True)
-    print(f"Actualizaciones en colección: {len(changed_df)}")
+    removals, to_reingest = check_indexed_pmc_articles(indexed_pmc_ids)
+    print(f"\nBajas: {len(removals)} ({', '.join(f'{k}: {v}' for k, v in removals.items())})" if removals else "\nBajas: 0")
+    print(f"Cambios a reingerir: {len(to_reingest)}")
 
-    if not removals and changed_df.empty:
+    if not removals and not to_reingest:
         print("→ Nada que actualizar en PMC.")
-        tmp_path.unlink(missing_ok=True)
         return
 
     if dry_run:
         print("\n[dry-run] Cambios calculados, Qdrant no modificado.")
-        tmp_path.unlink(missing_ok=True)
         return
 
-    # Borrar PMC IDs que ya no cumplen requisitos
+    # Retirar PMC IDs que ya no cumplen requisitos: borra sus chunks Y limpia
+    # pmc_id/license/pmc_last_updated del punto PubMed asociado (conservando
+    # el propio documento PubMed).
     if removals:
-        print(f"\nBorrando {len(removals)} artículos PMC de Qdrant...")
-        for pmc_id in removals:
-            client.delete(
-                collection_name=COLLECTION_NAME,
-                points_selector=Filter(
-                    must=[
-                        FieldCondition(key="metadata.source", match=MatchValue(value="pmc")),
-                        FieldCondition(key="metadata.pmc_id", match=MatchValue(value=pmc_id)),
-                    ]
-                ),
-            )
-            print(f"  ✓ Borrado {pmc_id}")
+        print(f"\nRetirando {len(removals)} artículos PMC de Qdrant...")
+        remove_pmc_fulltext(list(removals.keys()))
 
-    # Reingestar artículos con last_updated cambiado
-    if not changed_df.empty:
-        reingest_changed_pmc(changed_df)
-
-    # Reemplazar CSV local con el nuevo
-    shutil.move(str(tmp_path), str(LOCAL_OA))
-    print("\n✓ OA CSV actualizado en disco.")
+    # Reingestar artículos cuya metadata OA cambió
+    if to_reingest:
+        reingest_pmc_articles(to_reingest)
 
 
 def main():

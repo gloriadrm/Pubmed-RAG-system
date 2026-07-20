@@ -28,10 +28,54 @@ EMBEDDING_MODEL = "BAAI/bge-m3"
 # -------------- PUBMED / NCBI --------------
 
 PUBMED_UPDATE_BASE = "https://ftp.ncbi.nlm.nih.gov/pubmed/updatefiles/"
-OA_CSV_URL         = "https://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_file_list.csv"
+PUBMED_LAST_UPDATE = DATA_DIR / "pubmed_last_update.txt"
 
-LOCAL_OA_CSV          = DATA_DIR / "oa_file_list.csv"
-PUBMED_LAST_UPDATE    = DATA_DIR / "pubmed_last_update.txt"
+# Tope de update files procesados por ejecución de run_pubmed_update(). NLM
+# publica varios ficheros al día (~100-200MB descomprimidos cada uno); tras
+# un periodo sin actualizar, el backlog pendiente puede ser de decenas o
+# cientos de ficheros — procesarlos todos en una sola petición síncrona de
+# /corpus/update tardaría muchos minutos u horas, muy por encima de lo
+# razonable para un botón de UI. El progreso se guarda fichero a fichero
+# (save_last_processed_file), así que sucesivas ejecuciones retoman donde
+# quedó la anterior sin perder ni repetir trabajo.
+#
+# Medido en vivo: incluso 3 ficheros tardaron ~12 min en este entorno (el
+# parseo XML con ElementTree es CPU-bound puro-Python, no libera el GIL —
+# bloquea también el resto de peticiones a la API mientras corre). 1 fichero
+# mantiene cada clic del botón dentro de "varios minutos" de verdad.
+PUBMED_MAX_FILES_PER_RUN = 1
+
+# -------------- PMC OPEN ACCESS (Cloud Service en AWS) --------------
+#
+# NCBI retiró oa_file_list.csv del FTP Service en 2026 (ver anuncio:
+# https://ncbiinsights.ncbi.nlm.nih.gov/2026/02/12/pmc-article-dataset-distribution-services/).
+# El reemplazo no es un CSV único con licencia/fecha — es un bucket S3
+# público (pmc-oa-opendata) con un JSON de metadata individual por
+# artículo, más PMC-ids.csv.gz (bulk, no deprecado) para el mapeo
+# PMID→PMCID. Ver src/data_actualization/pmc_oa_client.py.
+
+PMC_IDS_URL       = "https://ftp.ncbi.nlm.nih.gov/pub/pmc/PMC-ids.csv.gz"
+LOCAL_PMC_IDS_CSV = DATA_DIR / "PMC-ids.csv"
+
+PMC_OA_METADATA_BASE_URL = "https://pmc-oa-opendata.s3.amazonaws.com/metadata"
+
+# -------------- ACTUALIZACIÓN DEL CORPUS --------------
+
+# Marca de tiempo de la última ejecución completa (PubMed + PMC) de
+# POST /corpus/update — expuesta en GET /corpus/status. No existe hasta la
+# primera ejecución.
+LAST_CORPUS_UPDATE_FILE = DATA_DIR / "last_corpus_update.txt"
+
+# Estado del job de actualización en curso/más reciente — único punto de
+# coordinación entre el proceso de la API y el proceso worker independiente
+# que ejecuta el trabajo (ver src/data_actualization/update_job.py).
+UPDATE_JOB_STATUS_FILE = DATA_DIR / "update_job_status.json"
+
+# Protección ligera del botón "Actualizar corpus" del frontend: al ser un
+# endpoint sin autenticación (proyecto de portfolio, no producción), este
+# cooldown evita que compartir la URL permita lanzar decenas de
+# actualizaciones reales seguidas. Ver POST /corpus/update en src/api/main.py.
+CORPUS_UPDATE_COOLDOWN_SECONDS = 300
 
 # -------------- INGESTA / LICENCIAS --------------
 
